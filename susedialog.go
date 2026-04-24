@@ -1371,6 +1371,11 @@ func printHelp() {
 }
 
 func main() {
+	if len(os.Args) == 1 {
+		printHelp()
+		os.Exit(0)
+	}
+
 	for _, arg := range os.Args[1:] {
 		switch arg {
 		case "-h", "--help":
