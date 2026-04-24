@@ -1,0 +1,205 @@
+.TH SUSEDIALOG 1 "April 2026" "susedialog" "User Commands"
+.SH NAME
+susedialog \- openSUSE-branded terminal dialog shim
+.SH SYNOPSIS
+.B susedialog
+[\fIcommon-options\fR]
+.I widget
+[\fIwidget-options\fR]
+.SH DESCRIPTION
+.B susedialog
+is a Bubble Tea-based compatibility shim for a subset of
+.BR dialog (1)
+widgets, designed for openSUSE system tooling such as
+.B jeos-firstboot
+and
+.BR opensuse-migration-tool .
+.PP
+Like
+.BR dialog ,
+the UI is drawn on standard output and the selected value(s) are written to
+standard error (or the file descriptor given by
+.BR --output-fd ).
+A non-zero exit status signals cancellation.
+.PP
+Screen clearing between dialogs is
+.B enabled by default
+(equivalent to always passing
+.B --clear
+to
+.BR dialog ).
+.SH WIDGETS
+.TP
+.BI "--msgbox " "text height width"
+Display a message box with an
+.B OK
+button.
+Returns 0 when dismissed.
+.TP
+.BI "--infobox " "text height width"
+Display a non-interactive informational message and exit immediately with
+status 0.
+.TP
+.BI "--textbox " "file height width"
+Display the contents of
+.I file
+in a scrollable box.
+Press
+.B Enter
+or click
+.B Continue
+to dismiss.
+.TP
+.BI "--yesno " "text height width"
+Display a yes/no question.
+Returns 0 for Yes, 1 for No.
+.TP
+.BI "--inputbox " "text height width"
+Prompt the user for a single line of text.
+The entered value is written to the output file descriptor.
+.TP
+.BI "--passwordbox " "text height width"
+Like
+.B --inputbox
+but input is masked with asterisks.
+The entered value is written to the output file descriptor.
+.TP
+.BI "--menu " "text height width list-height tag label [tag label] ..."
+Display a single-selection menu.
+Writes the selected
+.I tag
+to the output file descriptor.
+.TP
+.BI "--checklist " "text height width list-height tag label state [tag label state] ..."
+Display a multi-selection checklist.
+.I state
+is
+.B on
+or
+.BR off .
+Writes a space-separated quoted list of selected tags to the output file descriptor.
+.TP
+.BI "--form " "text height width form-height label y x init y x flen ilen [...]"
+Display an editable form with labelled fields.
+Field positions and lengths are accepted for
+.BR dialog (1)
+compatibility but layout is managed automatically.
+Writes field values separated by newlines to the output file descriptor.
+.TP
+.BI "--mixedform " "text height width form-height label y x init y x flen ilen type [...]"
+Like
+.B --form
+but each field has an additional
+.I type
+argument:
+.B 0
+normal,
+.B 1
+password (masked),
+.B 2
+read-only label.
+.TP
+.BI "--progress " "text height width [percent]"
+Display a progress bar.
+If
+.I percent
+is given the bar is set to that value; otherwise it reads percentages from
+standard input.
+.SH COMMON OPTIONS
+.TP
+.BI "--title " title
+Set the dialog title.
+.TP
+.BI "--backtitle " backtitle
+Set the background title (displayed at the top of the screen).
+.TP
+.BI "--ok-label " label
+Override the label of the OK/Yes button (default:
+.BR OK ).
+.TP
+.BI "--cancel-label " label
+Override the label of the Cancel/No button.
+.TP
+.BI "--exit-label " label
+Override the label of the Exit button (default:
+.BR Exit ).
+.TP
+.BI "--output-fd " fd
+Write output to file descriptor
+.I fd
+instead of standard error.
+.TP
+.BI "--default-item " tag
+Pre-select
+.I tag
+in a menu or checklist.
+.TP
+.B --clear
+Clear the screen before rendering the next dialog.
+This is the default behavior; the flag is accepted for
+.BR dialog (1)
+compatibility.
+.TP
+.B --insecure
+Accepted for compatibility.
+Password fields are always masked regardless of this flag.
+.TP
+.B --no-nl-expand
+Do not expand
+.B \\n
+escape sequences in text strings.
+.TP
+.B --no-collapse
+Accepted for
+.BR dialog (1)
+compatibility; has no effect.
+.SH EXIT STATUS
+.TP
+.B 0
+The user confirmed or selected a value (Yes, OK, Continue).
+.TP
+.B 1
+The user cancelled (No, Cancel, ESC).
+.SH ENVIRONMENT
+.TP
+.B SUSEDIALOG_DEBUG_KEYS
+When set to
+.BR 1 ,
+received key names are printed to standard error while a dialog is running.
+Useful for debugging key-handling issues.
+.SH EXAMPLES
+Display a simple message:
+.PP
+.RS
+.EX
+susedialog --title "Hello" --msgbox "Installation complete." 10 50
+.EE
+.RE
+.PP
+Prompt the user to choose a migration target:
+.PP
+.RS
+.EX
+CHOICE=$(susedialog --title "Migration" \\
+  --menu "Select target:" 20 60 10 \\
+  "15.6" "openSUSE Leap 15.6" \\
+  "16.0" "openSUSE Leap 16.0" \\
+  2>&1 >/dev/tty) || exit 1
+.EE
+.RE
+.PP
+Collect user credentials:
+.PP
+.RS
+.EX
+PASS=$(susedialog --title "Auth" \\
+  --passwordbox "Enter password:" 10 50 \\
+  2>&1 >/dev/tty)
+.EE
+.RE
+.SH SEE ALSO
+.BR dialog (1)
+.SH AUTHORS
+susedialog was written by the openSUSE community.
+.SH BUGS
+Report bugs at \fIhttps://github.com/openSUSE/susedialog/issues\fR.
