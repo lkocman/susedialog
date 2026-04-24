@@ -23,11 +23,15 @@ var gitCommit = "dev"
 const (
 	modeNone mode = iota
 	modeMsgBox
+	modeInfoBox
+	modeTextBox
 	modeYesNo
 	modeMenu
 	modeChecklist
 	modeForm
 	modeProgress
+	modeInputBox
+	modePasswordBox
 )
 
 // TickMsg is sent periodically to animate the UI
@@ -40,20 +44,30 @@ type menuItem struct {
 }
 
 type formField struct {
-	Label string
-	Value string
+	Label     string
+	Value     string
+	FieldType int
 }
 
 type config struct {
-	Title      string
-	Backtitle  string
-	Text       string
-	Height     int
-	Width      int
-	ListHeight int
-	Mode       mode
-	Items      []menuItem
-	Fields     []formField
+	Title       string
+	Backtitle   string
+	OkLabel     string
+	CancelLabel string
+	ExitLabel   string
+	OutputFD    int
+	Clear       bool
+	DefaultItem string
+	NoNLExpand  bool
+	NoCollapse  bool
+	Insecure    bool
+	Text        string
+	Height      int
+	Width       int
+	ListHeight  int
+	Mode        mode
+	Items       []menuItem
+	Fields      []formField
 	Percent    int
 }
 
@@ -85,17 +99,18 @@ var opensuse = palette{
 }
 
 type model struct {
-	cfg        config
-	cursor     int
-	choice     int
-	quitting   bool
-	cancelled  bool
-	debugKeys  bool
-	width      int
-	height     int
-	inputs     []textinput.Model
-	focusIndex int
-	tick       int
+	cfg                  config
+	cursor               int
+	choice               int
+	quitting             bool
+	cancelled            bool
+	debugKeys            bool
+	width                int
+	height               int
+	inputs               []textinput.Model
+	focusIndex           int
+	tick                 int
+	textboxButtonFocused bool
 }
 
 func envEnabled(name string) bool {
@@ -106,19 +121,51 @@ func envEnabled(name string) bool {
 func newModel(cfg config) model {
 	m := model{cfg: cfg, debugKeys: envEnabled("SUSEDIALOG_DEBUG_KEYS")}
 
+	if cfg.DefaultItem != "" && (cfg.Mode == modeMenu || cfg.Mode == modeChecklist) {
+		for i, it := range cfg.Items {
+			if it.Tag == cfg.DefaultItem {
+				m.cursor = i
+				break
+			}
+		}
+	}
+
 	if cfg.Mode == modeForm {
 		m.inputs = make([]textinput.Model, 0, len(cfg.Fields))
 		for i, f := range cfg.Fields {
+			if f.FieldType == 2 {
+				continue
+			}
 			ti := textinput.New()
 			ti.SetValue(f.Value)
 			ti.Placeholder = ""
+			ti.Prompt = "> "
 			ti.CharLimit = 256
 			ti.SetWidth(32)
-			if i == 0 {
+			if f.FieldType == 1 {
+				ti.EchoMode = textinput.EchoPassword
+				ti.EchoCharacter = '*'
+			}
+			if len(m.inputs) == 0 || i == 0 {
 				ti.Focus()
 			}
 			m.inputs = append(m.inputs, ti)
 		}
+	}
+
+	if cfg.Mode == modeInputBox || cfg.Mode == modePasswordBox {
+		m.inputs = make([]textinput.Model, 1)
+		ti := textinput.New()
+		ti.Placeholder = ""
+		ti.Prompt = "> "
+		ti.CharLimit = 256
+		ti.SetWidth(40)
+		if cfg.Mode == modePasswordBox {
+			ti.EchoMode = textinput.EchoPassword
+			ti.EchoCharacter = '*'
+		}
+		ti.Focus()
+		m.inputs[0] = ti
 	}
 
 	return m
@@ -140,6 +187,66 @@ func renderWithBoldMarkers(text string, normalStyle, boldAccentStyle lipgloss.St
 	}
 
 	return b.String()
+}
+
+func normalizeDialogText(text string, noNLExpand bool) string {
+	if noNLExpand {
+		return text
+	}
+	return strings.ReplaceAll(text, `\n`, "\n")
+}
+
+func wrapLine(line string, width int) string {
+	if width <= 1 {
+		return line
+	}
+	if len([]rune(line)) <= width {
+		return line
+	}
+
+	words := strings.Fields(line)
+	if len(words) == 0 {
+		return ""
+	}
+
+	var out []string
+	current := words[0]
+
+	for _, w := range words[1:] {
+		if len([]rune(current))+1+len([]rune(w)) <= width {
+			current += " " + w
+			continue
+		}
+
+		out = append(out, current)
+		for len([]rune(w)) > width {
+			r := []rune(w)
+			out = append(out, string(r[:width]))
+			w = string(r[width:])
+		}
+		current = w
+	}
+
+	out = append(out, current)
+	return strings.Join(out, "\n")
+}
+
+func wrapText(text string, width int) string {
+	if width <= 1 {
+		return text
+	}
+
+	lines := strings.Split(text, "\n")
+	wrapped := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line == "" {
+			wrapped = append(wrapped, "")
+			continue
+		}
+		wrapped = append(wrapped, wrapLine(line, width))
+	}
+
+	return strings.Join(wrapped, "\n")
 }
 
 func renderRainbowUnderline(length int) string {
@@ -172,10 +279,81 @@ func renderRainbowUnderline(length int) string {
 	return b.String()
 }
 
+func clampInt(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
+func (m model) listVisibleCount(total int) int {
+	if total <= 0 {
+		return 0
+	}
+
+	visible := total
+	if m.cfg.ListHeight > 0 {
+		visible = clampInt(m.cfg.ListHeight, 1, total)
+	}
+
+	if m.height > 0 {
+		reserved := 5
+		if m.cfg.Backtitle != "" {
+			reserved++
+		}
+		if m.cfg.Title != "" {
+			reserved += 3
+		}
+
+		textLines := 1
+		if m.cfg.Text != "" {
+			textLines = strings.Count(m.cfg.Text, "\n") + 1
+		}
+		reserved += textLines + 2
+
+		maxByTerm := m.height - reserved
+		if maxByTerm > 0 {
+			if maxByTerm < visible {
+				visible = maxByTerm
+			}
+		}
+	}
+
+	if visible < 1 {
+		visible = 1
+	}
+
+	return clampInt(visible, 1, total)
+}
+
+func listWindow(total, visible, cursor int) (int, int) {
+	if total <= 0 || visible <= 0 {
+		return 0, 0
+	}
+	if visible >= total {
+		return 0, total
+	}
+
+	cursor = clampInt(cursor, 0, total-1)
+	start := cursor - visible/2
+	start = clampInt(start, 0, total-visible)
+	end := start + visible
+	return start, end
+}
+
 func (m model) Init() tea.Cmd {
-	return tea.Tick(time.Millisecond*150, func(t time.Time) tea.Msg {
+	tickCmd := tea.Tick(time.Millisecond*150, func(t time.Time) tea.Msg {
 		return TickMsg{}
 	})
+
+	if m.cfg.Mode == modeForm || m.cfg.Mode == modeInputBox || m.cfg.Mode == modePasswordBox {
+		return tea.Batch(tickCmd, textinput.Blink)
+	}
+
+	return tickCmd
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -206,6 +384,85 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc", "q", "ctrl+c":
 				m.cancelled = true
 				m.quitting = true
+				return m, tea.Quit
+			}
+
+		case modeInputBox, modePasswordBox:
+			switch s {
+			case "enter":
+				m.quitting = true
+				return m, tea.Quit
+			case "esc", "q", "ctrl+c":
+				m.cancelled = true
+				m.quitting = true
+				return m, tea.Quit
+			default:
+				// Delegate to textinput widget
+				if len(m.inputs) > 0 {
+					m.inputs[0], _ = m.inputs[0].Update(msg)
+				}
+			}
+
+		case modeTextBox:
+			lines := strings.Split(m.cfg.Text, "\n")
+			maxOffset := len(lines) - 1
+			if maxOffset < 0 {
+				maxOffset = 0
+			}
+
+			switch s {
+			case "up", "k":
+				if m.textboxButtonFocused {
+					// From button, go back to end of content
+					m.textboxButtonFocused = false
+					m.cursor = maxOffset
+				} else if m.cursor > 0 {
+					// Scroll up in content
+					m.cursor--
+				}
+			case "down", "j":
+				if m.textboxButtonFocused {
+					// Already at button, stay there
+				} else if m.cursor < maxOffset {
+					// Scroll down in content
+					m.cursor++
+				} else {
+					// At bottom of content, move to button
+					m.textboxButtonFocused = true
+				}
+			case "pgup", "b":
+				if !m.textboxButtonFocused {
+					m.cursor = clampInt(m.cursor-10, 0, maxOffset)
+				}
+			case "pgdown", "f", " ", "space":
+				if !m.textboxButtonFocused {
+					newCursor := clampInt(m.cursor+10, 0, maxOffset)
+					if newCursor == maxOffset && m.cursor == maxOffset {
+						// Already at bottom, move to button
+						m.textboxButtonFocused = true
+					} else {
+						m.cursor = newCursor
+					}
+				}
+			case "home", "g":
+				if !m.textboxButtonFocused {
+					m.cursor = 0
+				}
+			case "end", "G":
+				if !m.textboxButtonFocused {
+					m.cursor = maxOffset
+					m.textboxButtonFocused = true
+				}
+			case "tab":
+				// Tab still works as explicit toggle
+				m.textboxButtonFocused = !m.textboxButtonFocused
+			case "enter":
+				// Enter always activates button
+				m.quitting = true
+				return m, tea.Quit
+			case "esc", "q", "ctrl+c":
+				m.quitting = true
+				m.cancelled = true
 				return m, tea.Quit
 			}
 
@@ -366,6 +623,16 @@ func (m model) View() tea.View {
 	helpStyle := lipgloss.NewStyle().
 		Foreground(opensuse.ButterflyBlue)
 
+	inputFieldStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(opensuse.GabbroGray).
+		Padding(0, 1)
+
+	focusedInputFieldStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(opensuse.GeekoGreen).
+		Padding(0, 1)
+
 	progressPanelStyle := lipgloss.NewStyle().
 		Background(opensuse.MapleMaroon).
 		Padding(0, 1)
@@ -377,6 +644,11 @@ func (m model) View() tea.View {
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(opensuse.GeekoGreen).
+		Padding(1, 2)
+
+	inactiveBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(opensuse.GabbroGray).
 		Padding(1, 2)
 
 	selectedBulletStyle := lipgloss.NewStyle().
@@ -394,20 +666,131 @@ func (m model) View() tea.View {
 	}
 
 	if m.cfg.Title != "" {
-		b.WriteString(renderWithBoldMarkers(m.cfg.Title, titleStyle, titleAccentStyle))
+		title := normalizeDialogText(m.cfg.Title, m.cfg.NoNLExpand)
+		b.WriteString(renderWithBoldMarkers(title, titleStyle, titleAccentStyle))
 		b.WriteString("\n")
-		b.WriteString(renderRainbowUnderline(40))
+		// b.WriteString(renderRainbowUnderline(40))
+		b.WriteString(lipgloss.NewStyle().Foreground(opensuse.PlumPurple).Bold(true).Render(strings.Repeat("━", 40)))
 		b.WriteString("\n\n")
 	}
 
+	displayText := normalizeDialogText(m.cfg.Text, m.cfg.NoNLExpand)
+
 	switch m.cfg.Mode {
 	case modeMsgBox:
-		b.WriteString(boxStyle.Render(renderWithBoldMarkers(m.cfg.Text, textStyle, boldTextStyle)))
+		b.WriteString(boxStyle.Render(renderWithBoldMarkers(displayText, textStyle, boldTextStyle)))
 		b.WriteString("\n\n")
-		b.WriteString(helpStyle.Render("Press Enter to continue · Esc to cancel"))
+		b.WriteString(focusedStyle.Render(fmt.Sprintf("[ %s ]", m.cfg.OkLabel)))
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("Enter confirms · Esc cancels"))
+
+	case modeInputBox:
+		b.WriteString(renderWithBoldMarkers(displayText, textStyle, boldTextStyle))
+		b.WriteString("\n\n")
+		if len(m.inputs) > 0 {
+			b.WriteString(focusedInputFieldStyle.Render(m.inputs[0].View()))
+		}
+		b.WriteString("\n\n")
+		okLabel := m.cfg.OkLabel
+		if okLabel == "" {
+			okLabel = "OK"
+		}
+		b.WriteString(focusedStyle.Render(fmt.Sprintf("[ %s ]", okLabel)))
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("Enter confirms · Esc cancels"))
+
+	case modePasswordBox:
+		b.WriteString(renderWithBoldMarkers(displayText, textStyle, boldTextStyle))
+		b.WriteString("\n\n")
+		if len(m.inputs) > 0 {
+			b.WriteString(focusedInputFieldStyle.Render(m.inputs[0].View()))
+		}
+		b.WriteString("\n\n")
+		okLabel := m.cfg.OkLabel
+		if okLabel == "" {
+			okLabel = "OK"
+		}
+		b.WriteString(focusedStyle.Render(fmt.Sprintf("[ %s ]", okLabel)))
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("Enter confirms · Esc cancels"))
+
+	case modeTextBox:
+		lines := strings.Split(displayText, "\n")
+		total := len(lines)
+		if total == 0 {
+			lines = []string{""}
+			total = 1
+		}
+
+		visible := total
+		if m.cfg.Height > 0 {
+			// Reserve space: 6 for margins + 3 for button and help text
+			visible = clampInt(m.cfg.Height-9, 1, total)
+		}
+		if m.height > 0 {
+			// Reserve space: 10 for margins + 3 for button and help text
+			maxByTerm := m.height - 13
+			if maxByTerm > 0 && maxByTerm < visible {
+				visible = maxByTerm
+			}
+		}
+
+		maxStart := total - visible
+		if maxStart < 0 {
+			maxStart = 0
+		}
+		start := clampInt(m.cursor, 0, maxStart)
+		end := start + visible
+		if end > total {
+			end = total
+		}
+
+		body := strings.Join(lines[start:end], "\n")
+
+		contentWidth := 60
+		if m.cfg.Width > 0 {
+			contentWidth = m.cfg.Width - 6
+		}
+		if m.width > 0 {
+			maxByTerm := m.width - 10
+			if maxByTerm > 0 && maxByTerm < contentWidth {
+				contentWidth = maxByTerm
+			}
+		}
+		contentWidth = clampInt(contentWidth, 20, 200)
+		body = wrapText(body, contentWidth)
+		
+		// Use gray border if button is focused, green if scrolling
+		currentBoxStyle := boxStyle
+		if m.textboxButtonFocused {
+			currentBoxStyle = inactiveBoxStyle
+		}
+		
+		b.WriteString(currentBoxStyle.Width(contentWidth).Render(textStyle.Render(body)))
+		b.WriteString("\n\n")
+		
+		// Show button with exit label
+		exitLabel := m.cfg.ExitLabel
+		if exitLabel == "" {
+			exitLabel = "OK"
+		}
+		
+		buttonStyle := mutedStyle
+		if m.textboxButtonFocused {
+			buttonStyle = focusedStyle
+		}
+		b.WriteString(buttonStyle.Render(fmt.Sprintf("[ %s ]", exitLabel)))
+		b.WriteString("\n")
+		
+		// Help text shows focus context
+		if m.textboxButtonFocused {
+			b.WriteString(helpStyle.Render("↑ back · Enter confirm · Esc cancel"))
+		} else {
+			b.WriteString(helpStyle.Render("↑/↓ scroll · End/↓ at bottom → button · Esc cancel"))
+		}
 
 	case modeYesNo:
-		b.WriteString(boxStyle.Render(renderWithBoldMarkers(m.cfg.Text, textStyle, boldTextStyle)))
+		b.WriteString(boxStyle.Render(renderWithBoldMarkers(displayText, textStyle, boldTextStyle)))
 		b.WriteString("\n\n")
 
 		yesStyle := mutedStyle
@@ -424,10 +807,18 @@ func (m model) View() tea.View {
 		b.WriteString(helpStyle.Render("←/→ move · Enter confirm · Esc cancel"))
 
 	case modeMenu:
-		b.WriteString(renderWithBoldMarkers(m.cfg.Text, textStyle, boldTextStyle))
+		b.WriteString(renderWithBoldMarkers(displayText, textStyle, boldTextStyle))
 		b.WriteString("\n\n")
 
-		for i, it := range m.cfg.Items {
+		visible := m.listVisibleCount(len(m.cfg.Items))
+		start, end := listWindow(len(m.cfg.Items), visible, m.cursor)
+		if start > 0 {
+			b.WriteString(mutedStyle.Render("  ..."))
+			b.WriteString("\n")
+		}
+
+		for i := start; i < end; i++ {
+			it := m.cfg.Items[i]
 			prefix := "  "
 			lineStyle := mutedStyle
 
@@ -446,14 +837,27 @@ func (m model) View() tea.View {
 			b.WriteString("\n")
 		}
 
+		if end < len(m.cfg.Items) {
+			b.WriteString(mutedStyle.Render("  ..."))
+			b.WriteString("\n")
+		}
+
 		b.WriteString("\n")
 		b.WriteString(helpStyle.Render("↑/↓ move · Enter select · Esc cancel"))
 
 	case modeChecklist:
-		b.WriteString(renderWithBoldMarkers(m.cfg.Text, textStyle, boldTextStyle))
+		b.WriteString(renderWithBoldMarkers(displayText, textStyle, boldTextStyle))
 		b.WriteString("\n\n")
 
-		for i, it := range m.cfg.Items {
+		visible := m.listVisibleCount(len(m.cfg.Items))
+		start, end := listWindow(len(m.cfg.Items), visible, m.cursor)
+		if start > 0 {
+			b.WriteString(mutedStyle.Render("  ..."))
+			b.WriteString("\n")
+		}
+
+		for i := start; i < end; i++ {
+			it := m.cfg.Items[i]
 			cursor := "  "
 			if i == m.cursor {
 				// Pulse cursor visibility based on tick
@@ -486,24 +890,50 @@ func (m model) View() tea.View {
 			b.WriteString("\n")
 		}
 
-		b.WriteString("\n")
-		b.WriteString(helpStyle.Render("↑/↓ move · Space toggle · Enter confirm · Esc cancel"))
-
-	case modeForm:
-		b.WriteString(renderWithBoldMarkers(m.cfg.Text, textStyle, boldTextStyle))
-		b.WriteString("\n\n")
-
-		for i, f := range m.cfg.Fields {
-			line := fmt.Sprintf("%s %s", labelStyle.Render(f.Label), m.inputs[i].View())
-			b.WriteString(line)
+		if end < len(m.cfg.Items) {
+			b.WriteString(mutedStyle.Render("  ..."))
 			b.WriteString("\n")
 		}
 
 		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("↑/↓ move · Space toggle · Enter confirm · Esc cancel"))
+
+	case modeForm:
+		b.WriteString(renderWithBoldMarkers(displayText, textStyle, boldTextStyle))
+		b.WriteString("\n\n")
+
+		inputIndex := 0
+		for _, f := range m.cfg.Fields {
+			switch f.FieldType {
+			case 2:
+				b.WriteString(labelStyle.Render(f.Label))
+				b.WriteString("\n")
+			case 0, 1:
+				if inputIndex < len(m.inputs) {
+					fieldStyle := inputFieldStyle
+					if inputIndex == m.focusIndex {
+						fieldStyle = focusedInputFieldStyle
+					}
+					b.WriteString(labelStyle.Render(f.Label))
+					b.WriteString("\n")
+					b.WriteString(fieldStyle.Render(m.inputs[inputIndex].View()))
+					b.WriteString("\n")
+					b.WriteString("\n")
+					inputIndex++
+				}
+			default:
+				b.WriteString(labelStyle.Render(f.Label))
+				b.WriteString("\n")
+			}
+		}
+
+		b.WriteString("\n")
+		b.WriteString(focusedStyle.Render(fmt.Sprintf("[ %s ]", m.cfg.OkLabel)))
+		b.WriteString("\n")
 		b.WriteString(helpStyle.Render("Tab moves focus · Enter confirm · Esc cancel"))
 
 	case modeProgress:
-		b.WriteString(renderWithBoldMarkers(m.cfg.Text, focusedStyle, boldTextStyle))
+		b.WriteString(renderWithBoldMarkers(displayText, focusedStyle, boldTextStyle))
 		b.WriteString("\n\n")
 
 		// Retro 8-bit bar: color follows palette position as progress moves.
@@ -587,13 +1017,16 @@ func (m model) View() tea.View {
 }
 
 func parseArgs(args []string) (config, error) {
-	cfg := config{}
+	cfg := config{OkLabel: "OK", ExitLabel: "Exit", OutputFD: 2, Clear: true}
 	var i int
 
 	for i < len(args) {
 		switch args[i] {
 		case "--clear":
+			cfg.Clear = true
 			i++
+
+			// Common options here are primarily tracked for jeos-firstboot dialog compatibility.
 
 		case "--title":
 			if i+1 >= len(args) {
@@ -609,6 +1042,57 @@ func parseArgs(args []string) (config, error) {
 			cfg.Backtitle = args[i+1]
 			i += 2
 
+		case "--ok-label":
+			if i+1 >= len(args) {
+				return cfg, errors.New("missing value for --ok-label")
+			}
+			cfg.OkLabel = args[i+1]
+			i += 2
+
+		case "--cancel-label":
+			if i+1 >= len(args) {
+				return cfg, errors.New("missing value for --cancel-label")
+			}
+			cfg.CancelLabel = args[i+1]
+			i += 2
+
+		case "--exit-label":
+			if i+1 >= len(args) {
+				return cfg, errors.New("missing value for --exit-label")
+			}
+			cfg.ExitLabel = args[i+1]
+			i += 2
+
+		case "--output-fd":
+			if i+1 >= len(args) {
+				return cfg, errors.New("missing value for --output-fd")
+			}
+			fd, err := strconv.Atoi(args[i+1])
+			if err != nil || fd < 0 {
+				return cfg, errors.New("invalid value for --output-fd")
+			}
+			cfg.OutputFD = fd
+			i += 2
+
+		case "--default-item":
+			if i+1 >= len(args) {
+				return cfg, errors.New("missing value for --default-item")
+			}
+			cfg.DefaultItem = args[i+1]
+			i += 2
+
+		case "--no-nl-expand":
+			cfg.NoNLExpand = true
+			i++
+
+		case "--no-collapse":
+			cfg.NoCollapse = true
+			i++
+
+		case "--insecure":
+			cfg.Insecure = true
+			i++
+
 		case "--msgbox":
 			if i+3 >= len(args) {
 				return cfg, errors.New("invalid --msgbox arguments")
@@ -619,11 +1103,55 @@ func parseArgs(args []string) (config, error) {
 			cfg.Width, _ = strconv.Atoi(args[i+3])
 			return cfg, nil
 
+		case "--infobox":
+			if i+3 >= len(args) {
+				return cfg, errors.New("invalid --infobox arguments")
+			}
+			cfg.Mode = modeInfoBox
+			cfg.Text = args[i+1]
+			cfg.Height, _ = strconv.Atoi(args[i+2])
+			cfg.Width, _ = strconv.Atoi(args[i+3])
+			return cfg, nil
+
 		case "--yesno":
 			if i+3 >= len(args) {
 				return cfg, errors.New("invalid --yesno arguments")
 			}
 			cfg.Mode = modeYesNo
+			cfg.Text = args[i+1]
+			cfg.Height, _ = strconv.Atoi(args[i+2])
+			cfg.Width, _ = strconv.Atoi(args[i+3])
+			return cfg, nil
+
+		case "--textbox", "--text-box":
+			if i+3 >= len(args) {
+				return cfg, errors.New("invalid --textbox arguments")
+			}
+			content, err := os.ReadFile(args[i+1])
+			if err != nil {
+				return cfg, fmt.Errorf("failed to read textbox file: %w", err)
+			}
+			cfg.Mode = modeTextBox
+			cfg.Text = string(content)
+			cfg.Height, _ = strconv.Atoi(args[i+2])
+			cfg.Width, _ = strconv.Atoi(args[i+3])
+			return cfg, nil
+
+		case "--inputbox":
+			if i+3 >= len(args) {
+				return cfg, errors.New("invalid --inputbox arguments")
+			}
+			cfg.Mode = modeInputBox
+			cfg.Text = args[i+1]
+			cfg.Height, _ = strconv.Atoi(args[i+2])
+			cfg.Width, _ = strconv.Atoi(args[i+3])
+			return cfg, nil
+
+		case "--passwordbox":
+			if i+3 >= len(args) {
+				return cfg, errors.New("invalid --passwordbox arguments")
+			}
+			cfg.Mode = modePasswordBox
 			cfg.Text = args[i+1]
 			cfg.Height, _ = strconv.Atoi(args[i+2])
 			cfg.Width, _ = strconv.Atoi(args[i+3])
@@ -687,8 +1215,32 @@ func parseArgs(args []string) (config, error) {
 					break
 				}
 				cfg.Fields = append(cfg.Fields, formField{
-					Label: args[j],
-					Value: args[j+2],
+					Label:     args[j],
+					Value:     args[j+3],
+					FieldType: 0,
+				})
+			}
+			return cfg, nil
+
+		case "--mixedform":
+			if i+4 >= len(args) {
+				return cfg, errors.New("invalid --mixedform arguments")
+			}
+			cfg.Mode = modeForm
+			cfg.Text = args[i+1]
+			cfg.Height, _ = strconv.Atoi(args[i+2])
+			cfg.Width, _ = strconv.Atoi(args[i+3])
+			cfg.ListHeight, _ = strconv.Atoi(args[i+4])
+
+			for j := i + 5; j+8 < len(args); j += 9 {
+				if strings.HasPrefix(args[j], "--") {
+					break
+				}
+				fieldType, _ := strconv.Atoi(args[j+8])
+				cfg.Fields = append(cfg.Fields, formField{
+					Label:     args[j],
+					Value:     args[j+3],
+					FieldType: fieldType,
 				})
 			}
 			return cfg, nil
@@ -722,8 +1274,19 @@ func emitResult(m model) int {
 		return 1
 	}
 
+	output := os.Stderr
+	if m.cfg.OutputFD != 2 {
+		output = os.NewFile(uintptr(m.cfg.OutputFD), fmt.Sprintf("fd-%d", m.cfg.OutputFD))
+		if output == nil {
+			output = os.Stderr
+		}
+	}
+
 	switch m.cfg.Mode {
 	case modeMsgBox:
+		return 0
+
+	case modeInfoBox:
 		return 0
 
 	case modeYesNo:
@@ -736,7 +1299,7 @@ func emitResult(m model) int {
 		if len(m.cfg.Items) == 0 {
 			return 1
 		}
-		_, _ = fmt.Fprintln(os.Stderr, m.cfg.Items[m.cursor].Tag)
+		_, _ = fmt.Fprintln(output, m.cfg.Items[m.cursor].Tag)
 		return 0
 
 	case modeChecklist:
@@ -746,16 +1309,25 @@ func emitResult(m model) int {
 				selected = append(selected, fmt.Sprintf("\"%s\"", it.Tag))
 			}
 		}
-		_, _ = fmt.Fprintln(os.Stderr, strings.Join(selected, " "))
+		_, _ = fmt.Fprintln(output, strings.Join(selected, " "))
 		return 0
 
 	case modeForm:
 		for _, in := range m.inputs {
-			_, _ = fmt.Fprintln(os.Stderr, in.Value())
+			_, _ = fmt.Fprintln(output, in.Value())
 		}
 		return 0
 
 	case modeProgress:
+		return 0
+
+	case modeTextBox:
+		return 0
+
+	case modeInputBox, modePasswordBox:
+		if len(m.inputs) > 0 {
+			_, _ = fmt.Fprintln(output, m.inputs[0].Value())
+		}
 		return 0
 
 	default:
@@ -783,10 +1355,15 @@ func printHelp() {
 	fmt.Println("Special options:")
 	fmt.Println("  [--help] [--version]")
 	fmt.Println("Common options:")
-	fmt.Println("  [--clear] [--title <title>] [--backtitle <backtitle>]")
+	fmt.Println("  [--clear] [--title <title>] [--backtitle <backtitle>] [--ok-label <str>] [--cancel-label <str>] [--exit-label <str>] [--output-fd <fd>] [--default-item <str>] [--no-nl-expand] [--no-collapse] [--insecure]")
 	fmt.Println("Box options:")
 	fmt.Println("  --msgbox     <text> <height> <width>")
+	fmt.Println("  --infobox    <text> <height> <width>")
+	fmt.Println("  --textbox    <file> <height> <width>")
 	fmt.Println("  --yesno      <text> <height> <width>")
+	fmt.Println("  --inputbox   <text> <height> <width>")
+	fmt.Println("  --passwordbox <text> <height> <width>")
+	fmt.Println("  --mixedform  <text> <height> <width> <form-height> <label1> <l_y1> <l_x1> <item1> <i_y1> <i_x1> <flen1> <ilen1> <itype1>...")
 	fmt.Println("  --menu       <text> <height> <width> <menu-height> <tag1> <item1>...")
 	fmt.Println("  --checklist  <text> <height> <width> <list-height> <tag1> <item1> <status1>...")
 	fmt.Println("  --form       <text> <height> <width> <form-height> <label1> <l_y1> <l_x1> <item1> <i_y1> <i_x1> <flen1> <ilen1>...")
@@ -809,6 +1386,14 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
+	}
+
+	if cfg.Clear {
+		fmt.Print("\033[2J\033[H")
+	}
+
+	if cfg.Mode == modeInfoBox {
+		os.Exit(0)
 	}
 
 	p := tea.NewProgram(newModel(cfg))

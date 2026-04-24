@@ -1,19 +1,57 @@
 # susedialog
 
+```text
++==============================================================+
+||                      SUSEDIALOG 0.1                        ||
+||                   openSUSE dialog shim                     ||
+||                                                            ||
+||   Widgets: [ msgbox ] [ menu ] [ checklist ]               ||
+||            [ form ] [ mixedform ] [ progress ]             ||
+||            [ inputbox ] [ passwordbox ]                    ||
+||                                                            ||
+||   > [ OK ]   [ Cancel ]   [ Help ]                         ||
+||                                                            ||
+||   Bubble Tea compatibility for openSUSE tooling            ||
+||   Targets: opensuse-migration-tool, jeos-firstboot         ||
++==============================================================+
+```
+
 `susedialog` is an openSUSE-focused, Bubble Tea-based compatibility shim for a small subset of `dialog`.
 
-It is intentionally narrow: the initial target is `opensuse-migration-tool` and similar shell tools.
+It is intentionally narrow: the initial target is openSUSE system tooling that currently includes:
 
-## Supported widgets in v0.1.0
+- `opensuse-migration-tool`
+- `jeos-firstboot`
+
+## Supported widgets
 
 - `--msgbox`
+- `--infobox` (non-blocking, exits immediately with success)
+- `--textbox`
 - `--yesno`
+- `--inputbox`
+- `--passwordbox`
 - `--menu`
 - `--checklist`
 - `--form`
+- `--mixedform`
+- `--progress`
+
+## Supported common options
+
 - `--title`
 - `--backtitle`
-- `--clear` (accepted and ignored)
+- `--ok-label`
+- `--cancel-label`
+- `--exit-label`
+- `--output-fd`
+- `--default-item`
+- `--no-nl-expand`
+- `--no-collapse` (accepted for compatibility)
+- `--insecure`
+- `--clear`
+
+`--clear` is enabled by default in `susedialog` for screen-to-screen transitions.
 
 ## Compatibility behavior
 
@@ -22,6 +60,8 @@ Like `dialog`, this tool:
 - draws the UI on standard output
 - writes the selected value(s) to standard error
 - returns a non-zero exit status when cancelled
+
+For `--infobox`, `susedialog` exits immediately with status `0` (non-interactive status message behavior).
 
 That means existing shell snippets such as this should keep working:
 
@@ -50,6 +90,13 @@ go build -ldflags "-X main.gitCommit=$(git rev-parse --short HEAD)" .
 ## Notes
 
 This is not meant to be a full clone of `dialog`. The goal is to provide a polished openSUSE-branded terminal UI for the specific widgets openSUSE tools actually use.
+
+### UI details
+
+- Title underline is currently a single PlumPurple line by default.
+- Rainbow underline code is intentionally kept commented in the source for possible future return.
+- `--textbox` keeps a stable box width while scrolling and wraps long lines.
+- Password fields are masked in password dialogs and mixed/form password entries.
 
 To debug key handling issues, enable key logging:
 
