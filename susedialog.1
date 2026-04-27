@@ -134,6 +134,15 @@ Pre-select
 .I tag
 in a menu or checklist.
 .TP
+.BI "--theme " name
+Select a named color theme.
+Built-in themes include
+.B opensuse
+and
+.BR high-contrast ,
+and
+.BR rainbow .
+.TP
 .B --clear
 Clear the screen before rendering the next dialog.
 This is the default behavior; the flag is accepted for
@@ -167,6 +176,36 @@ When set to
 .BR 1 ,
 received key names are printed to standard error while a dialog is running.
 Useful for debugging key-handling issues.
+.TP
+.B SUSEDIALOG_THEME
+Selects the theme when
+.B --theme
+is not specified.
+.TP
+.B SUSEDIALOG_THEME_TOGGLE_KEY
+Sets the key binding used to toggle between
+.B opensuse
+and
+.B high-contrast
+themes while a dialog is open.
+Default is
+.BR ctrl+t .
+.PP
+Theme resolution order is:
+.B --theme
+option,
+.B SUSEDIALOG_THEME
+environment variable,
+.I ~/.config/susedialog/config
+(or
+.IR $XDG_CONFIG_HOME/susedialog/config ),
+then
+.IR /etc/susedialog/config .
+.PP
+The toggle shortcut can be set in config files with
+.B theme_toggle_key
+or via
+.BR SUSEDIALOG_THEME_TOGGLE_KEY .
 .SH EXAMPLES
 Display a simple message:
 .PP

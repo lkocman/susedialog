@@ -46,6 +46,7 @@ It is intentionally narrow: the initial target is openSUSE system tooling that c
 - `--exit-label`
 - `--output-fd`
 - `--default-item`
+- `--theme`
 - `--no-nl-expand`
 - `--no-collapse` (accepted for compatibility)
 - `--insecure`
@@ -97,6 +98,37 @@ This is not meant to be a full clone of `dialog`. The goal is to provide a polis
 - Rainbow underline code is intentionally kept commented in the source for possible future return.
 - `--textbox` keeps a stable box width while scrolling and wraps long lines.
 - Password fields are masked in password dialogs and mixed/form password entries.
+
+### Theming and Accessibility
+
+`susedialog` now supports named themes, including:
+
+- `opensuse` (default)
+- `high-contrast` (accessibility-oriented)
+- `rainbow` (multi-color accents and borders)
+
+The `high-contrast` theme is informed by terminal palette legibility research from
+https://inai.de/projects/consoleet/palette, favoring VGA-like high-separation
+color choices for robust contrast across common terminal pairings.
+
+Theme selection priority (highest to lowest):
+
+1. CLI option: `--theme <name>`
+2. Environment: `SUSEDIALOG_THEME`
+3. User config: `~/.config/susedialog/config` (or `$XDG_CONFIG_HOME/susedialog/config`)
+4. System config: `/etc/susedialog/config`
+5. Built-in default: `opensuse`
+
+Config files accept either `theme=<name>` or `SUSEDIALOG_THEME=<name>`.
+
+Theme toggle shortcut defaults to `ctrl+t` and can be configured with:
+
+- `SUSEDIALOG_THEME_TOGGLE_KEY` (environment)
+- `theme_toggle_key=<key>` (user/system config)
+
+Bundled themes live in the project directory `themes/`.
+
+At runtime, `susedialog` also checks `themes/` relative to the executing binary location and uses those files as overrides. This allows a `$SCRIPTDIR/themes` style deployment.
 
 To debug key handling issues, enable key logging:
 

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image/color"
@@ -10,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 )
 
@@ -68,7 +70,11 @@ type config struct {
 	Mode        mode
 	Items       []menuItem
 	Fields      []formField
-	Percent    int
+	Percent     int
+	Theme       string
+	ThemeToggleKey string
+	Palette     palette
+	Themes      map[string]palette
 }
 
 type palette struct {
@@ -84,7 +90,7 @@ type palette struct {
 	MapleMaroon   color.Color
 }
 
-// Colors from LCP's new openSUSE color scheme	
+// Colors from LCP's new openSUSE color scheme
 var opensuse = palette{
 	GeekoGreen:    lipgloss.Color("#42cd42"),
 	YarrowYellow:  lipgloss.Color("#d4cb1b"),
@@ -96,6 +102,58 @@ var opensuse = palette{
 	BagelBeige:    lipgloss.Color("#fff8ee"),
 	GabbroGray:    lipgloss.Color("#b8aeab"),
 	MapleMaroon:   lipgloss.Color("#301a14"),
+}
+
+var highContrast = palette{
+	GeekoGreen:    lipgloss.Color("#00aa00"),
+	YarrowYellow:  lipgloss.Color("#ffff55"),
+	Orange:        lipgloss.Color("#ffaa00"),
+	RadishRed:     lipgloss.Color("#ff5555"),
+	PlumPurple:    lipgloss.Color("#ff55ff"),
+	ButterflyBlue: lipgloss.Color("#5555ff"),
+	TurquoiseTeal: lipgloss.Color("#55ffff"),
+	BagelBeige:    lipgloss.Color("#ffffff"),
+	GabbroGray:    lipgloss.Color("#aaaaaa"),
+	MapleMaroon:   lipgloss.Color("#000000"),
+}
+
+var rainbow = palette{
+	GeekoGreen:    lipgloss.Color("#42cd42"),
+	YarrowYellow:  lipgloss.Color("#d4cb1b"),
+	Orange:        lipgloss.Color("#f68946"),
+	RadishRed:     lipgloss.Color("#ff5b45"),
+	PlumPurple:    lipgloss.Color("#a498ff"),
+	ButterflyBlue: lipgloss.Color("#00c8ff"),
+	TurquoiseTeal: lipgloss.Color("#20caa3"),
+	BagelBeige:    lipgloss.Color("#fff8ee"),
+	GabbroGray:    lipgloss.Color("#b8aeab"),
+	MapleMaroon:   lipgloss.Color("#301a14"),
+}
+
+//go:embed themes/*.json
+var themeFS embed.FS
+
+type themeFile struct {
+	Name    string           `json:"name"`
+	Palette themeFilePalette `json:"palette"`
+}
+
+type themeFilePalette struct {
+	GeekoGreen    string `json:"GeekoGreen"`
+	YarrowYellow  string `json:"YarrowYellow"`
+	Orange        string `json:"Orange"`
+	RadishRed     string `json:"RadishRed"`
+	PlumPurple    string `json:"PlumPurple"`
+	ButterflyBlue string `json:"ButterflyBlue"`
+	TurquoiseTeal string `json:"TurquoiseTeal"`
+	BagelBeige    string `json:"BagelBeige"`
+	GabbroGray    string `json:"GabbroGray"`
+	MapleMaroon   string `json:"MapleMaroon"`
+}
+
+type runtimeConfig struct {
+	Theme          string
+	ThemeToggleKey string
 }
 
 type model struct {
@@ -119,6 +177,9 @@ func envEnabled(name string) bool {
 }
 
 func newModel(cfg config) model {
+	if strings.TrimSpace(cfg.ThemeToggleKey) == "" {
+		cfg.ThemeToggleKey = "ctrl+t"
+	}
 	m := model{cfg: cfg, debugKeys: envEnabled("SUSEDIALOG_DEBUG_KEYS")}
 
 	if cfg.DefaultItem != "" && (cfg.Mode == modeMenu || cfg.Mode == modeChecklist) {
@@ -249,23 +310,27 @@ func wrapText(text string, width int) string {
 	return strings.Join(wrapped, "\n")
 }
 
-func renderRainbowUnderline(length int) string {
+func paletteColors(p palette) []color.Color {
+	return []color.Color{
+		p.GeekoGreen,
+		p.YarrowYellow,
+		p.Orange,
+		p.RadishRed,
+		p.PlumPurple,
+		p.ButterflyBlue,
+		p.TurquoiseTeal,
+		p.BagelBeige,
+		p.GabbroGray,
+		p.MapleMaroon,
+	}
+}
+
+func renderRainbowUnderline(length int, p palette) string {
 	if length < 12 {
 		length = 12
 	}
 
-	colors := []color.Color{
-		opensuse.GeekoGreen,
-		opensuse.YarrowYellow,
-		opensuse.Orange,
-		opensuse.RadishRed,
-		opensuse.PlumPurple,
-		opensuse.ButterflyBlue,
-		opensuse.TurquoiseTeal,
-		opensuse.BagelBeige,
-		opensuse.GabbroGray,
-		opensuse.MapleMaroon,
-	}
+	colors := paletteColors(p)
 
 	var b strings.Builder
 	for i := 0; i < length; i++ {
@@ -277,6 +342,345 @@ func renderRainbowUnderline(length int) string {
 	}
 
 	return b.String()
+}
+
+func padRightRunes(s string, target int) string {
+	current := len([]rune(s))
+	if current >= target {
+		return s
+	}
+	return s + strings.Repeat(" ", target-current)
+}
+
+func renderRainbowFrame(content string, p palette) string {
+	colors := paletteColors(p)
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+
+	maxWidth := 0
+	for _, line := range lines {
+		if w := len([]rune(line)); w > maxWidth {
+			maxWidth = w
+		}
+	}
+	if maxWidth < 4 {
+		maxWidth = 4
+	}
+
+	horizontal := maxWidth + 2
+
+	renderChar := func(ch string, c color.Color) string {
+		return lipgloss.NewStyle().Foreground(c).Bold(true).Render(ch)
+	}
+
+	var out strings.Builder
+	out.WriteString(renderChar("╭", colors[0]))
+	for i := 0; i < horizontal; i++ {
+		idx := (i * len(colors)) / horizontal
+		if idx >= len(colors) {
+			idx = len(colors) - 1
+		}
+		out.WriteString(renderChar("─", colors[idx]))
+	}
+	out.WriteString(renderChar("╮", colors[len(colors)-1]))
+	out.WriteString("\n")
+
+	for i, line := range lines {
+		left := colors[(i*2)%len(colors)]
+		right := colors[(i*2+1)%len(colors)]
+		out.WriteString(renderChar("│", left))
+		out.WriteString(" ")
+		out.WriteString(padRightRunes(line, maxWidth))
+		out.WriteString(" ")
+		out.WriteString(renderChar("│", right))
+		if i < len(lines)-1 {
+			out.WriteString("\n")
+		}
+	}
+	out.WriteString("\n")
+
+	out.WriteString(renderChar("╰", colors[0]))
+	for i := 0; i < horizontal; i++ {
+		idx := ((horizontal - 1 - i) * len(colors)) / horizontal
+		if idx >= len(colors) {
+			idx = len(colors) - 1
+		}
+		out.WriteString(renderChar("─", colors[idx]))
+	}
+	out.WriteString(renderChar("╯", colors[len(colors)-1]))
+
+	return out.String()
+}
+
+func colorFromHex(v string) (color.Color, error) {
+	v = strings.TrimSpace(v)
+	if len(v) != 7 || !strings.HasPrefix(v, "#") {
+		return nil, fmt.Errorf("invalid color %q", v)
+	}
+	return lipgloss.Color(v), nil
+}
+
+func paletteFromThemeFile(p themeFilePalette) (palette, error) {
+	var out palette
+	var err error
+
+	out.GeekoGreen, err = colorFromHex(p.GeekoGreen)
+	if err != nil {
+		return out, err
+	}
+	out.YarrowYellow, err = colorFromHex(p.YarrowYellow)
+	if err != nil {
+		return out, err
+	}
+	out.Orange, err = colorFromHex(p.Orange)
+	if err != nil {
+		return out, err
+	}
+	out.RadishRed, err = colorFromHex(p.RadishRed)
+	if err != nil {
+		return out, err
+	}
+	out.PlumPurple, err = colorFromHex(p.PlumPurple)
+	if err != nil {
+		return out, err
+	}
+	out.ButterflyBlue, err = colorFromHex(p.ButterflyBlue)
+	if err != nil {
+		return out, err
+	}
+	out.TurquoiseTeal, err = colorFromHex(p.TurquoiseTeal)
+	if err != nil {
+		return out, err
+	}
+	out.BagelBeige, err = colorFromHex(p.BagelBeige)
+	if err != nil {
+		return out, err
+	}
+	out.GabbroGray, err = colorFromHex(p.GabbroGray)
+	if err != nil {
+		return out, err
+	}
+	out.MapleMaroon, err = colorFromHex(p.MapleMaroon)
+	if err != nil {
+		return out, err
+	}
+
+	return out, nil
+}
+
+func parseThemeDefinition(data []byte, fallbackName string) (string, palette, error) {
+	var tf themeFile
+	if err := json.Unmarshal(data, &tf); err != nil {
+		return "", palette{}, err
+	}
+
+	name := strings.TrimSpace(strings.ToLower(tf.Name))
+	if name == "" {
+		name = strings.TrimSuffix(strings.ToLower(fallbackName), ".json")
+	}
+
+	p, err := paletteFromThemeFile(tf.Palette)
+	if err != nil {
+		return "", palette{}, err
+	}
+
+	return name, p, nil
+}
+
+func loadThemesFromDir(dir string) map[string]palette {
+	themes := map[string]palette{}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return themes
+	}
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+
+		data, readErr := os.ReadFile(filepath.Join(dir, e.Name()))
+		if readErr != nil {
+			continue
+		}
+
+		name, p, parseErr := parseThemeDefinition(data, e.Name())
+		if parseErr != nil {
+			continue
+		}
+
+		themes[name] = p
+	}
+
+	return themes
+}
+
+func executableDir() string {
+	exePath, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+
+	resolved, err := filepath.EvalSymlinks(exePath)
+	if err == nil {
+		exePath = resolved
+	}
+
+	return filepath.Dir(exePath)
+}
+
+func loadBundledThemes() map[string]palette {
+	themes := map[string]palette{
+		"opensuse":      opensuse,
+		"high-contrast": highContrast,
+		"rainbow":       rainbow,
+	}
+
+	entries, err := themeFS.ReadDir("themes")
+	if err != nil {
+		return themes
+	}
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+
+		data, readErr := themeFS.ReadFile(filepath.Join("themes", e.Name()))
+		if readErr != nil {
+			continue
+		}
+
+		name, p, parseErr := parseThemeDefinition(data, e.Name())
+		if parseErr != nil {
+			continue
+		}
+
+		themes[name] = p
+	}
+
+	if exeDir := executableDir(); exeDir != "" {
+		for name, p := range loadThemesFromDir(filepath.Join(exeDir, "themes")) {
+			themes[name] = p
+		}
+	}
+
+	return themes
+}
+
+func cleanConfigValue(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.Trim(v, `"'`)
+	return strings.TrimSpace(v)
+}
+
+func parseRuntimeConfig(path string) runtimeConfig {
+	rc := runtimeConfig{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return rc
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		line = strings.TrimPrefix(line, "export ")
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		key := strings.ToLower(strings.TrimSpace(parts[0]))
+		val := cleanConfigValue(parts[1])
+
+		switch key {
+		case "theme", "susedialog_theme":
+			rc.Theme = strings.ToLower(val)
+		case "theme_toggle_key", "susedialog_theme_toggle_key":
+			rc.ThemeToggleKey = normalizeKeyBinding(val)
+		}
+	}
+
+	return rc
+}
+
+func normalizeKeyBinding(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	v = strings.ReplaceAll(v, " ", "")
+	return v
+}
+
+func userConfigPath() string {
+	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
+		return filepath.Join(xdg, "susedialog", "config")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "susedialog", "config")
+}
+
+func resolveThemeName(cliTheme string) string {
+	theme := strings.ToLower(strings.TrimSpace(cliTheme))
+	if theme != "" {
+		return theme
+	}
+
+	if envTheme := strings.ToLower(strings.TrimSpace(os.Getenv("SUSEDIALOG_THEME"))); envTheme != "" {
+		return envTheme
+	}
+
+	if userCfg := userConfigPath(); userCfg != "" {
+		if cfg := parseRuntimeConfig(userCfg); cfg.Theme != "" {
+			return cfg.Theme
+		}
+	}
+
+	if cfg := parseRuntimeConfig("/etc/susedialog/config"); cfg.Theme != "" {
+		return cfg.Theme
+	}
+
+	return "opensuse"
+}
+
+func resolveThemeToggleKey() string {
+	if envKey := normalizeKeyBinding(os.Getenv("SUSEDIALOG_THEME_TOGGLE_KEY")); envKey != "" {
+		return envKey
+	}
+
+	if userCfg := userConfigPath(); userCfg != "" {
+		if cfg := parseRuntimeConfig(userCfg); cfg.ThemeToggleKey != "" {
+			return cfg.ThemeToggleKey
+		}
+	}
+
+	if cfg := parseRuntimeConfig("/etc/susedialog/config"); cfg.ThemeToggleKey != "" {
+		return cfg.ThemeToggleKey
+	}
+
+	return "ctrl+t"
+}
+
+func nextThemeName(current string) string {
+	if strings.EqualFold(strings.TrimSpace(current), "high-contrast") {
+		return "opensuse"
+	}
+	return "high-contrast"
+}
+
+func resolvePalette(theme string, themes map[string]palette) (string, palette) {
+	name := strings.ToLower(strings.TrimSpace(theme))
+	if p, ok := themes[name]; ok {
+		return name, p
+	}
+	return "opensuse", opensuse
 }
 
 func clampInt(v, min, max int) int {
@@ -370,9 +774,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		s := msg.String()
+		s := normalizeKeyBinding(msg.String())
 		if m.debugKeys {
 			_, _ = fmt.Fprintf(os.Stderr, "[susedialog debug] key=%q\n", s)
+		}
+
+		toggleKey := normalizeKeyBinding(m.cfg.ThemeToggleKey)
+		if toggleKey == "" {
+			toggleKey = "ctrl+t"
+		}
+
+		if s == toggleKey {
+			nextTheme := nextThemeName(m.cfg.Theme)
+			m.cfg.Theme, m.cfg.Palette = resolvePalette(nextTheme, m.cfg.Themes)
+			return m, nil
 		}
 
 		switch m.cfg.Mode {
@@ -588,75 +1003,103 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() tea.View {
+	p := m.cfg.Palette
+	if p.GeekoGreen == nil {
+		p = opensuse
+	}
+	highContrastTheme := strings.EqualFold(m.cfg.Theme, "high-contrast")
+	rainbowTheme := strings.EqualFold(m.cfg.Theme, "rainbow")
+
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(opensuse.ButterflyBlue)
+		Foreground(p.ButterflyBlue)
 
 	titleAccentStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(opensuse.PlumPurple)
+		Foreground(p.PlumPurple)
 
 	backtitleStyle := lipgloss.NewStyle().
-		Foreground(opensuse.GabbroGray)
+		Foreground(p.GabbroGray)
 
 	textStyle := lipgloss.NewStyle().
-		Foreground(opensuse.BagelBeige)
+		Foreground(p.BagelBeige)
 
 	boldTextStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(opensuse.ButterflyBlue)
+		Foreground(p.ButterflyBlue)
 
 	focusedStyle := lipgloss.NewStyle().
-		Foreground(opensuse.GeekoGreen).
+		Foreground(p.GeekoGreen).
 		Bold(true)
 
 	selectedStyle := lipgloss.NewStyle().
-		Foreground(opensuse.GeekoGreen).
+		Foreground(p.GeekoGreen).
 		Bold(true)
 
 	mutedStyle := lipgloss.NewStyle().
-		Foreground(opensuse.GabbroGray)
+		Foreground(p.GabbroGray)
 
 	labelStyle := lipgloss.NewStyle().
-		Foreground(opensuse.GeekoGreen)
+		Foreground(p.GeekoGreen)
 
 	helpStyle := lipgloss.NewStyle().
-		Foreground(opensuse.ButterflyBlue)
+		Foreground(p.ButterflyBlue)
 
 	inputFieldStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(opensuse.GabbroGray).
+		BorderForeground(p.GabbroGray).
 		Padding(0, 1)
 
 	focusedInputFieldStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(opensuse.GeekoGreen).
+		BorderForeground(p.GeekoGreen).
 		Padding(0, 1)
 
 	progressPanelStyle := lipgloss.NewStyle().
-		Background(opensuse.MapleMaroon).
+		Background(p.MapleMaroon).
 		Padding(0, 1)
 
 	warningStyle := lipgloss.NewStyle().
-		Foreground(opensuse.Orange).
+		Foreground(p.Orange).
 		Bold(true)
 
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(opensuse.GeekoGreen).
+		BorderForeground(p.GeekoGreen).
 		Padding(1, 2)
 
 	inactiveBoxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(opensuse.GabbroGray).
+		BorderForeground(p.GabbroGray).
 		Padding(1, 2)
 
 	selectedBulletStyle := lipgloss.NewStyle().
-		Foreground(opensuse.PlumPurple).
+		Foreground(p.PlumPurple).
 		Bold(true)
 
 	unselectedBulletStyle := lipgloss.NewStyle().
-		Foreground(opensuse.PlumPurple)
+		Foreground(p.PlumPurple)
+
+	if highContrastTheme {
+		backtitleStyle = backtitleStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon)
+		textStyle = textStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon)
+		boldTextStyle = boldTextStyle.Foreground(p.YarrowYellow).Background(p.MapleMaroon)
+		titleStyle = titleStyle.Foreground(p.TurquoiseTeal).Background(p.MapleMaroon)
+		titleAccentStyle = titleAccentStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon)
+		focusedStyle = focusedStyle.Foreground(p.MapleMaroon).Background(p.YarrowYellow)
+		selectedStyle = selectedStyle.Foreground(p.MapleMaroon).Background(p.ButterflyBlue)
+		mutedStyle = mutedStyle.Foreground(p.GabbroGray).Background(p.MapleMaroon)
+		labelStyle = labelStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon)
+		helpStyle = helpStyle.Foreground(p.YarrowYellow).Background(p.MapleMaroon)
+		inputFieldStyle = inputFieldStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon).BorderForeground(p.BagelBeige)
+		focusedInputFieldStyle = focusedInputFieldStyle.Foreground(p.MapleMaroon).Background(p.YarrowYellow).BorderForeground(p.YarrowYellow)
+		progressPanelStyle = progressPanelStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon)
+		warningStyle = warningStyle.Foreground(p.RadishRed).Background(p.MapleMaroon)
+		boxStyle = boxStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon).Border(lipgloss.ThickBorder()).BorderForeground(p.BagelBeige)
+		inactiveBoxStyle = inactiveBoxStyle.Foreground(p.GabbroGray).Background(p.MapleMaroon).Border(lipgloss.ThickBorder()).BorderForeground(p.GabbroGray)
+		selectedBulletStyle = selectedBulletStyle.Foreground(p.TurquoiseTeal).Background(p.MapleMaroon)
+		unselectedBulletStyle = unselectedBulletStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon)
+	}
 
 	var b strings.Builder
 
@@ -669,8 +1112,11 @@ func (m model) View() tea.View {
 		title := normalizeDialogText(m.cfg.Title, m.cfg.NoNLExpand)
 		b.WriteString(renderWithBoldMarkers(title, titleStyle, titleAccentStyle))
 		b.WriteString("\n")
-		// b.WriteString(renderRainbowUnderline(40))
-		b.WriteString(lipgloss.NewStyle().Foreground(opensuse.PlumPurple).Bold(true).Render(strings.Repeat("━", 40)))
+		if rainbowTheme {
+			b.WriteString(renderRainbowUnderline(40, p))
+		} else {
+			b.WriteString(lipgloss.NewStyle().Foreground(p.PlumPurple).Bold(true).Render(strings.Repeat("━", 40)))
+		}
 		b.WriteString("\n\n")
 	}
 
@@ -678,7 +1124,12 @@ func (m model) View() tea.View {
 
 	switch m.cfg.Mode {
 	case modeMsgBox:
-		b.WriteString(boxStyle.Render(renderWithBoldMarkers(displayText, textStyle, boldTextStyle)))
+		msgBody := renderWithBoldMarkers(displayText, textStyle, boldTextStyle)
+		if rainbowTheme {
+			b.WriteString(renderRainbowFrame(msgBody, p))
+		} else {
+			b.WriteString(boxStyle.Render(msgBody))
+		}
 		b.WriteString("\n\n")
 		b.WriteString(focusedStyle.Render(fmt.Sprintf("[ %s ]", m.cfg.OkLabel)))
 		b.WriteString("\n")
@@ -759,29 +1210,29 @@ func (m model) View() tea.View {
 		}
 		contentWidth = clampInt(contentWidth, 20, 200)
 		body = wrapText(body, contentWidth)
-		
+
 		// Use gray border if button is focused, green if scrolling
 		currentBoxStyle := boxStyle
 		if m.textboxButtonFocused {
 			currentBoxStyle = inactiveBoxStyle
 		}
-		
+
 		b.WriteString(currentBoxStyle.Width(contentWidth).Render(textStyle.Render(body)))
 		b.WriteString("\n\n")
-		
+
 		// Show button with exit label
 		exitLabel := m.cfg.ExitLabel
 		if exitLabel == "" {
 			exitLabel = "OK"
 		}
-		
+
 		buttonStyle := mutedStyle
 		if m.textboxButtonFocused {
 			buttonStyle = focusedStyle
 		}
 		b.WriteString(buttonStyle.Render(fmt.Sprintf("[ %s ]", exitLabel)))
 		b.WriteString("\n")
-		
+
 		// Help text shows focus context
 		if m.textboxButtonFocused {
 			b.WriteString(helpStyle.Render("↑ back · Enter confirm · Esc cancel"))
@@ -790,7 +1241,12 @@ func (m model) View() tea.View {
 		}
 
 	case modeYesNo:
-		b.WriteString(boxStyle.Render(renderWithBoldMarkers(displayText, textStyle, boldTextStyle)))
+		ynBody := renderWithBoldMarkers(displayText, textStyle, boldTextStyle)
+		if rainbowTheme {
+			b.WriteString(renderRainbowFrame(ynBody, p))
+		} else {
+			b.WriteString(boxStyle.Render(ynBody))
+		}
 		b.WriteString("\n\n")
 
 		yesStyle := mutedStyle
@@ -946,16 +1402,16 @@ func (m model) View() tea.View {
 
 		// Full openSUSE palette from green to maroon.
 		paletteColors := []color.Color{
-			opensuse.GeekoGreen,
-			opensuse.YarrowYellow,
-			opensuse.Orange,
-			opensuse.RadishRed,
-			opensuse.PlumPurple,
-			opensuse.ButterflyBlue,
-			opensuse.TurquoiseTeal,
-			opensuse.BagelBeige,
-			opensuse.GabbroGray,
-			opensuse.MapleMaroon,
+			p.GeekoGreen,
+			p.YarrowYellow,
+			p.Orange,
+			p.RadishRed,
+			p.PlumPurple,
+			p.ButterflyBlue,
+			p.TurquoiseTeal,
+			p.BagelBeige,
+			p.GabbroGray,
+			p.MapleMaroon,
 		}
 
 		var bar strings.Builder
@@ -1012,7 +1468,12 @@ func (m model) View() tea.View {
 		b.WriteString(warningStyle.Render("Unsupported mode"))
 	}
 
-	v := tea.NewView(b.String())
+	out := b.String()
+	if highContrastTheme {
+		out = lipgloss.NewStyle().Foreground(p.BagelBeige).Background(p.MapleMaroon).Render(out)
+	}
+
+	v := tea.NewView(out)
 	return v
 }
 
@@ -1092,6 +1553,13 @@ func parseArgs(args []string) (config, error) {
 		case "--insecure":
 			cfg.Insecure = true
 			i++
+
+		case "--theme":
+			if i+1 >= len(args) {
+				return cfg, errors.New("missing value for --theme")
+			}
+			cfg.Theme = args[i+1]
+			i += 2
 
 		case "--msgbox":
 			if i+3 >= len(args) {
@@ -1355,7 +1823,7 @@ func printHelp() {
 	fmt.Println("Special options:")
 	fmt.Println("  [--help] [--version]")
 	fmt.Println("Common options:")
-	fmt.Println("  [--clear] [--title <title>] [--backtitle <backtitle>] [--ok-label <str>] [--cancel-label <str>] [--exit-label <str>] [--output-fd <fd>] [--default-item <str>] [--no-nl-expand] [--no-collapse] [--insecure]")
+	fmt.Println("  [--clear] [--title <title>] [--backtitle <backtitle>] [--ok-label <str>] [--cancel-label <str>] [--exit-label <str>] [--output-fd <fd>] [--default-item <str>] [--no-nl-expand] [--no-collapse] [--insecure] [--theme <name>]")
 	fmt.Println("Box options:")
 	fmt.Println("  --msgbox     <text> <height> <width>")
 	fmt.Println("  --infobox    <text> <height> <width>")
@@ -1391,6 +1859,29 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
+	}
+
+	requestedTheme := cfg.Theme
+	bundledThemes := loadBundledThemes()
+	resolvedThemeName := resolveThemeName(cfg.Theme)
+	cfg.ThemeToggleKey = resolveThemeToggleKey()
+	cfg.Themes = bundledThemes
+	cfg.Theme, cfg.Palette = resolvePalette(resolvedThemeName, bundledThemes)
+
+	if envEnabled("SUSEDIALOG_DEBUG_THEME") {
+		exeDir := executableDir()
+		themeDir := ""
+		if exeDir != "" {
+			themeDir = filepath.Join(exeDir, "themes")
+		}
+		_, _ = fmt.Fprintf(
+			os.Stderr,
+			"[susedialog debug] requested_theme=%q resolved_theme=%q executable=%q themes_dir=%q\n",
+			requestedTheme,
+			cfg.Theme,
+			exeDir,
+			themeDir,
+		)
 	}
 
 	if cfg.Clear {

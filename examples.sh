@@ -10,6 +10,18 @@ fi
 $DIALOGCMD --msgbox "Hello openSUSE 🚀" 10 40
 echo $?
 
+echo ""
+echo "Theme demo: opensuse (debug enabled)"
+SUSEDIALOG_DEBUG_THEME=1 $DIALOGCMD --theme opensuse --msgbox "Theme demo: opensuse" 10 50
+
+echo ""
+echo "Theme demo: high-contrast (debug enabled)"
+SUSEDIALOG_DEBUG_THEME=1 $DIALOGCMD --theme high-contrast --msgbox "Theme demo: high-contrast" 10 50
+
+echo ""
+echo "Theme demo: rainbow (debug enabled)"
+SUSEDIALOG_DEBUG_THEME=1 $DIALOGCMD --theme rainbow --msgbox "Theme demo: rainbow" 10 50
+
 $DIALOGCMD --yesno "Continue with migration?" 10 50
 echo "YESNO_EXIT=$?"
 
