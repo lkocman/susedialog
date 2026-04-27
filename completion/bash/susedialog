@@ -1,0 +1,33 @@
+# bash completion for susedialog
+
+_susedialog()
+{
+    local cur prev
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    local opts widgets themes aligns
+    opts="--help --version --clear --title --backtitle --ok-label --cancel-label --exit-label --output-fd --default-item --theme --align --no-nl-expand --no-collapse --insecure"
+    widgets="--msgbox --infobox --textbox --yesno --inputbox --passwordbox --menu --checklist --form --mixedform --progress"
+    themes="opensuse high-contrast rainbow"
+    aligns="topleft center"
+
+    case "${prev}" in
+        --theme)
+            COMPREPLY=( $(compgen -W "${themes}" -- "${cur}") )
+            return 0
+            ;;
+        --align)
+            COMPREPLY=( $(compgen -W "${aligns}" -- "${cur}") )
+            return 0
+            ;;
+        --textbox|--text-box)
+            COMPREPLY=( $(compgen -f -- "${cur}") )
+            return 0
+            ;;
+    esac
+
+    COMPREPLY=( $(compgen -W "${opts} ${widgets}" -- "${cur}") )
+}
+
+complete -F _susedialog susedialog
