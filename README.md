@@ -107,6 +107,10 @@ This is not meant to be a full clone of `dialog`. The goal is to provide a polis
 - `high-contrast` (accessibility-oriented)
 - `rainbow` (multi-color accents and borders)
 
+The `high-contrast` theme is informed by terminal palette legibility research from
+https://inai.de/projects/consoleet/palette, favoring VGA-like high-separation
+color choices for robust contrast across common terminal pairings.
+
 Theme selection priority (highest to lowest):
 
 1. CLI option: `--theme <name>`

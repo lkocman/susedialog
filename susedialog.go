@@ -105,15 +105,15 @@ var opensuse = palette{
 }
 
 var highContrast = palette{
-	GeekoGreen:    lipgloss.Color("#00ff00"),
-	YarrowYellow:  lipgloss.Color("#ffff00"),
-	Orange:        lipgloss.Color("#ffb000"),
-	RadishRed:     lipgloss.Color("#ff4040"),
-	PlumPurple:    lipgloss.Color("#ffffff"),
-	ButterflyBlue: lipgloss.Color("#00ffff"),
-	TurquoiseTeal: lipgloss.Color("#00d7d7"),
+	GeekoGreen:    lipgloss.Color("#00aa00"),
+	YarrowYellow:  lipgloss.Color("#ffff55"),
+	Orange:        lipgloss.Color("#ffaa00"),
+	RadishRed:     lipgloss.Color("#ff5555"),
+	PlumPurple:    lipgloss.Color("#ff55ff"),
+	ButterflyBlue: lipgloss.Color("#5555ff"),
+	TurquoiseTeal: lipgloss.Color("#55ffff"),
 	BagelBeige:    lipgloss.Color("#ffffff"),
-	GabbroGray:    lipgloss.Color("#d0d0d0"),
+	GabbroGray:    lipgloss.Color("#aaaaaa"),
 	MapleMaroon:   lipgloss.Color("#000000"),
 }
 
@@ -1081,24 +1081,24 @@ func (m model) View() tea.View {
 		Foreground(p.PlumPurple)
 
 	if highContrastTheme {
-		backtitleStyle = backtitleStyle.Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#000000"))
-		textStyle = textStyle.Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#000000"))
-		boldTextStyle = boldTextStyle.Foreground(lipgloss.Color("#ffff00")).Background(lipgloss.Color("#000000"))
-		titleStyle = titleStyle.Foreground(lipgloss.Color("#00ffff")).Background(lipgloss.Color("#000000"))
-		titleAccentStyle = titleAccentStyle.Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#000000"))
-		focusedStyle = focusedStyle.Foreground(lipgloss.Color("#000000")).Background(lipgloss.Color("#ffff00"))
-		selectedStyle = selectedStyle.Foreground(lipgloss.Color("#000000")).Background(lipgloss.Color("#00ffff"))
-		mutedStyle = mutedStyle.Foreground(lipgloss.Color("#d0d0d0")).Background(lipgloss.Color("#000000"))
-		labelStyle = labelStyle.Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#000000"))
-		helpStyle = helpStyle.Foreground(lipgloss.Color("#ffff00")).Background(lipgloss.Color("#000000"))
-		inputFieldStyle = inputFieldStyle.Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#000000")).BorderForeground(lipgloss.Color("#ffffff"))
-		focusedInputFieldStyle = focusedInputFieldStyle.Foreground(lipgloss.Color("#000000")).Background(lipgloss.Color("#ffff00")).BorderForeground(lipgloss.Color("#ffff00"))
-		progressPanelStyle = progressPanelStyle.Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#000000"))
-		warningStyle = warningStyle.Foreground(lipgloss.Color("#ff4040")).Background(lipgloss.Color("#000000"))
-		boxStyle = boxStyle.Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#000000")).Border(lipgloss.ThickBorder()).BorderForeground(lipgloss.Color("#ffffff"))
-		inactiveBoxStyle = inactiveBoxStyle.Foreground(lipgloss.Color("#d0d0d0")).Background(lipgloss.Color("#000000")).Border(lipgloss.ThickBorder()).BorderForeground(lipgloss.Color("#d0d0d0"))
-		selectedBulletStyle = selectedBulletStyle.Foreground(lipgloss.Color("#00ffff")).Background(lipgloss.Color("#000000"))
-		unselectedBulletStyle = unselectedBulletStyle.Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#000000"))
+		backtitleStyle = backtitleStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon)
+		textStyle = textStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon)
+		boldTextStyle = boldTextStyle.Foreground(p.YarrowYellow).Background(p.MapleMaroon)
+		titleStyle = titleStyle.Foreground(p.TurquoiseTeal).Background(p.MapleMaroon)
+		titleAccentStyle = titleAccentStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon)
+		focusedStyle = focusedStyle.Foreground(p.MapleMaroon).Background(p.YarrowYellow)
+		selectedStyle = selectedStyle.Foreground(p.MapleMaroon).Background(p.ButterflyBlue)
+		mutedStyle = mutedStyle.Foreground(p.GabbroGray).Background(p.MapleMaroon)
+		labelStyle = labelStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon)
+		helpStyle = helpStyle.Foreground(p.YarrowYellow).Background(p.MapleMaroon)
+		inputFieldStyle = inputFieldStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon).BorderForeground(p.BagelBeige)
+		focusedInputFieldStyle = focusedInputFieldStyle.Foreground(p.MapleMaroon).Background(p.YarrowYellow).BorderForeground(p.YarrowYellow)
+		progressPanelStyle = progressPanelStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon)
+		warningStyle = warningStyle.Foreground(p.RadishRed).Background(p.MapleMaroon)
+		boxStyle = boxStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon).Border(lipgloss.ThickBorder()).BorderForeground(p.BagelBeige)
+		inactiveBoxStyle = inactiveBoxStyle.Foreground(p.GabbroGray).Background(p.MapleMaroon).Border(lipgloss.ThickBorder()).BorderForeground(p.GabbroGray)
+		selectedBulletStyle = selectedBulletStyle.Foreground(p.TurquoiseTeal).Background(p.MapleMaroon)
+		unselectedBulletStyle = unselectedBulletStyle.Foreground(p.BagelBeige).Background(p.MapleMaroon)
 	}
 
 	var b strings.Builder
@@ -1470,7 +1470,7 @@ func (m model) View() tea.View {
 
 	out := b.String()
 	if highContrastTheme {
-		out = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#000000")).Render(out)
+		out = lipgloss.NewStyle().Foreground(p.BagelBeige).Background(p.MapleMaroon).Render(out)
 	}
 
 	v := tea.NewView(out)

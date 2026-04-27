@@ -1,15 +1,19 @@
 {
   "name": "high-contrast",
+  "description": "Accessibility-focused high-contrast palette inspired by console palette research.",
+  "inspiredBy": [
+    "https://inai.de/projects/consoleet/palette"
+  ],
   "palette": {
-    "GeekoGreen": "#00ff00",
-    "YarrowYellow": "#ffff00",
-    "Orange": "#ffb000",
-    "RadishRed": "#ff4040",
-    "PlumPurple": "#ffffff",
-    "ButterflyBlue": "#00ffff",
-    "TurquoiseTeal": "#00d7d7",
+    "GeekoGreen": "#00aa00",
+    "YarrowYellow": "#ffff55",
+    "Orange": "#ffaa00",
+    "RadishRed": "#ff5555",
+    "PlumPurple": "#ff55ff",
+    "ButterflyBlue": "#5555ff",
+    "TurquoiseTeal": "#55ffff",
     "BagelBeige": "#ffffff",
-    "GabbroGray": "#d0d0d0",
+    "GabbroGray": "#aaaaaa",
     "MapleMaroon": "#000000"
   }
 }
