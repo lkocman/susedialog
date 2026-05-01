@@ -639,6 +639,41 @@ func normalizeKeyBinding(v string) string {
 	return v
 }
 
+func formatKeyBindingLabel(v string) string {
+	v = normalizeKeyBinding(v)
+	if v == "" {
+		return "Ctrl+T"
+	}
+
+	parts := strings.Split(v, "+")
+	for i, part := range parts {
+		switch part {
+		case "ctrl":
+			parts[i] = "Ctrl"
+		case "alt":
+			parts[i] = "Alt"
+		case "shift":
+			parts[i] = "Shift"
+		case "cmd":
+			parts[i] = "Cmd"
+		case "esc":
+			parts[i] = "Esc"
+		case "pgup":
+			parts[i] = "PgUp"
+		case "pgdown":
+			parts[i] = "PgDn"
+		default:
+			if len(part) == 1 {
+				parts[i] = strings.ToUpper(part)
+			} else {
+				parts[i] = strings.ToUpper(part[:1]) + part[1:]
+			}
+		}
+	}
+
+	return strings.Join(parts, "+")
+}
+
 func userConfigPath() string {
 	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
 		return filepath.Join(xdg, "susedialog", "config")
@@ -722,6 +757,48 @@ func nextThemeName(current string) string {
 		return "opensuse"
 	}
 	return "high-contrast"
+}
+
+// saveUserTheme persists the given theme name to the user config file so the
+// choice survives across sessions and overrides any system-wide default.
+func saveUserTheme(theme string) {
+	cfgPath := userConfigPath()
+	if cfgPath == "" {
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		return
+	}
+
+	// Read existing lines and update or append SUSEDIALOG_THEME.
+	var lines []string
+	if data, err := os.ReadFile(cfgPath); err == nil {
+		lines = strings.Split(string(data), "\n")
+	}
+
+	newLine := "SUSEDIALOG_THEME=" + theme
+	found := false
+	for i, line := range lines {
+		stripped := strings.TrimPrefix(strings.TrimSpace(line), "export ")
+		if strings.HasPrefix(strings.ToLower(stripped), "susedialog_theme=") ||
+			strings.HasPrefix(strings.ToLower(stripped), "theme=") {
+			lines[i] = newLine
+			found = true
+			break
+		}
+	}
+	if !found {
+		lines = append(lines, newLine)
+	}
+
+	// Ensure file ends with a newline.
+	out := strings.Join(lines, "\n")
+	if !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+
+	_ = os.WriteFile(cfgPath, []byte(out), 0o600)
 }
 
 func resolvePalette(theme string, themes map[string]palette) (string, palette) {
@@ -846,6 +923,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if s == toggleKey {
 			nextTheme := nextThemeName(m.cfg.Theme)
 			m.cfg.Theme, m.cfg.Palette = resolvePalette(nextTheme, m.cfg.Themes)
+			saveUserTheme(m.cfg.Theme)
 			return m, nil
 		}
 
@@ -1526,6 +1604,13 @@ func (m model) View() tea.View {
 	default:
 		b.WriteString(warningStyle.Render("Unsupported mode"))
 	}
+
+	toggleKey := m.cfg.ThemeToggleKey
+	if toggleKey == "" {
+		toggleKey = "ctrl+t"
+	}
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("%s Accessibility On/Off", formatKeyBindingLabel(toggleKey))))
 
 	out := b.String()
 	if highContrastTheme {

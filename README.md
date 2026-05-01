@@ -126,7 +126,15 @@ Theme selection priority (highest to lowest):
 4. System config: `/etc/susedialog/config`
 5. Built-in default: `opensuse`
 
-Config files accept either `theme=<name>` or `SUSEDIALOG_THEME=<name>`.
+Config files are read from `~/.config/susedialog/config` or `$XDG_CONFIG_HOME/susedialog/config` for the current user, with `/etc/susedialog/config` as the system-wide fallback.
+
+Config files accept shell-style `key=value` entries, with or without a leading `export`. Supported keys are:
+
+- `theme=<name>` or `SUSEDIALOG_THEME=<name>`
+- `align=<topleft|center>` or `SUSEDIALOG_ALIGN=<topleft|center>`
+- `theme_toggle_key=<key>` or `SUSEDIALOG_THEME_TOGGLE_KEY=<key>`
+
+When the theme is changed at runtime with the toggle key, `susedialog` writes the selected theme back to the user config file as `SUSEDIALOG_THEME=<name>`. That makes the new theme persist across future sessions and override any system-wide default.
 
 Theme toggle shortcut defaults to `ctrl+t` and can be configured with:
 

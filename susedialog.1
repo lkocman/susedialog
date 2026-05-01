@@ -164,7 +164,7 @@ Password fields are always masked regardless of this flag.
 .TP
 .B --no-nl-expand
 Do not expand
-.B \\n
+.B \en
 escape sequences in text strings.
 .TP
 .B --no-collapse
@@ -219,6 +219,26 @@ environment variable,
 .IR $XDG_CONFIG_HOME/susedialog/config ),
 then
 .IR /etc/susedialog/config .
+.PP
+Config files use shell-style
+.B key=value
+entries and also accept lines prefixed with
+.BR export .
+Supported config keys are
+.BR theme ,
+.BR SUSEDIALOG_THEME ,
+.BR align ,
+.BR SUSEDIALOG_ALIGN ,
+.BR theme_toggle_key ,
+and
+.BR SUSEDIALOG_THEME_TOGGLE_KEY .
+.PP
+When the theme is changed at runtime with the toggle shortcut,
+.B susedialog
+stores the selected theme in the user config file as
+.BR SUSEDIALOG_THEME=... .
+This makes the choice persist across future runs and override any system-wide
+default.
 .PP
 The toggle shortcut can be set in config files with
 .B theme_toggle_key
