@@ -31,6 +31,7 @@ const (
 	modeYesNo
 	modeMenu
 	modeChecklist
+	modeRadiolist
 	modeForm
 	modeProgress
 	modeInputBox
@@ -57,6 +58,8 @@ type config struct {
 	Backtitle   string
 	OkLabel     string
 	CancelLabel string
+	YesLabel    string
+	NoLabel     string
 	ExitLabel   string
 	OutputFD    int
 	Clear       bool
@@ -189,9 +192,16 @@ func newModel(cfg config) model {
 	}
 	m := model{cfg: cfg, debugKeys: envEnabled("SUSEDIALOG_DEBUG_KEYS")}
 
-	if cfg.DefaultItem != "" && (cfg.Mode == modeMenu || cfg.Mode == modeChecklist) {
+	if cfg.DefaultItem != "" && (cfg.Mode == modeMenu || cfg.Mode == modeChecklist || cfg.Mode == modeRadiolist) {
 		for i, it := range cfg.Items {
 			if it.Tag == cfg.DefaultItem {
+				m.cursor = i
+				break
+			}
+		}
+	} else if cfg.Mode == modeRadiolist {
+		for i, it := range cfg.Items {
+			if it.On {
 				m.cursor = i
 				break
 			}
@@ -352,7 +362,7 @@ func renderRainbowUnderline(length int, p palette) string {
 }
 
 func padRightRunes(s string, target int) string {
-	current := len([]rune(s))
+	current := lipgloss.Width(s)
 	if current >= target {
 		return s
 	}
@@ -368,7 +378,7 @@ func renderRainbowFrame(content string, p palette) string {
 
 	maxWidth := 0
 	for _, line := range lines {
-		if w := len([]rune(line)); w > maxWidth {
+		if w := lipgloss.Width(line); w > maxWidth {
 			maxWidth = w
 		}
 	}
@@ -1091,6 +1101,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 
+		case modeRadiolist:
+			switch s {
+			case "up", "k":
+				if m.cursor > 0 {
+					m.cursor--
+				}
+			case "down", "j":
+				if m.cursor < len(m.cfg.Items)-1 {
+					m.cursor++
+				}
+			case " ", "space":
+				if len(m.cfg.Items) > 0 {
+					for i := range m.cfg.Items {
+						m.cfg.Items[i].On = i == m.cursor
+					}
+				}
+			case "enter":
+				if len(m.cfg.Items) > 0 {
+					for i := range m.cfg.Items {
+						m.cfg.Items[i].On = i == m.cursor
+					}
+				}
+				m.quitting = true
+				return m, tea.Quit
+			case "esc", "q":
+				m.cancelled = true
+				m.quitting = true
+				return m, tea.Quit
+			}
+
 		case modeForm:
 			switch s {
 			case "tab", "shift+tab", "up", "down":
@@ -1402,7 +1442,16 @@ func (m model) View() tea.View {
 			noStyle = focusedStyle
 		}
 
-		buttons := fmt.Sprintf("%s   %s", yesStyle.Render("[ Yes ]"), noStyle.Render("[ No ]"))
+		yesLabel := m.cfg.YesLabel
+		if yesLabel == "" {
+			yesLabel = "Yes"
+		}
+		noLabel := m.cfg.NoLabel
+		if noLabel == "" {
+			noLabel = "No"
+		}
+
+		buttons := fmt.Sprintf("%s   %s", yesStyle.Render(fmt.Sprintf("[ %s ]", yesLabel)), noStyle.Render(fmt.Sprintf("[ %s ]", noLabel)))
 		b.WriteString(buttons)
 		b.WriteString("\n\n")
 		b.WriteString(helpStyle.Render("←/→ move · Enter confirm · Esc cancel"))
@@ -1498,6 +1547,56 @@ func (m model) View() tea.View {
 
 		b.WriteString("\n")
 		b.WriteString(helpStyle.Render("↑/↓ move · Space toggle · Enter confirm · Esc cancel"))
+
+	case modeRadiolist:
+		b.WriteString(renderWithBoldMarkers(displayText, textStyle, boldTextStyle))
+		b.WriteString("\n\n")
+
+		visible := m.listVisibleCount(len(m.cfg.Items))
+		start, end := listWindow(len(m.cfg.Items), visible, m.cursor)
+		if start > 0 {
+			b.WriteString(mutedStyle.Render("  ..."))
+			b.WriteString("\n")
+		}
+
+		for i := start; i < end; i++ {
+			it := m.cfg.Items[i]
+			cursor := "  "
+			if i == m.cursor {
+				if m.tick%4 < 2 {
+					cursor = "› "
+				}
+			}
+
+			bullet := unselectedBulletStyle.Render("○")
+			if it.On {
+				bullet = selectedBulletStyle.Render("◉")
+			}
+
+			var line string
+			if it.Label != "" {
+				line = fmt.Sprintf("%s%s %s  %s", cursor, bullet, it.Tag, it.Label)
+			} else {
+				line = fmt.Sprintf("%s%s %s", cursor, bullet, it.Tag)
+			}
+
+			if i == m.cursor {
+				b.WriteString(focusedStyle.Render(line))
+			} else if it.On {
+				b.WriteString(selectedStyle.Render(line))
+			} else {
+				b.WriteString(mutedStyle.Render(line))
+			}
+			b.WriteString("\n")
+		}
+
+		if end < len(m.cfg.Items) {
+			b.WriteString(mutedStyle.Render("  ..."))
+			b.WriteString("\n")
+		}
+
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("↑/↓ move · Space select · Enter confirm · Esc cancel"))
 
 	case modeForm:
 		b.WriteString(renderWithBoldMarkers(displayText, textStyle, boldTextStyle))
@@ -1774,6 +1873,20 @@ func parseArgs(args []string) (config, error) {
 			cfg.CancelLabel = args[i+1]
 			i += 2
 
+		case "--yes-label":
+			if i+1 >= len(args) {
+				return cfg, errors.New("missing value for --yes-label")
+			}
+			cfg.YesLabel = args[i+1]
+			i += 2
+
+		case "--no-label":
+			if i+1 >= len(args) {
+				return cfg, errors.New("missing value for --no-label")
+			}
+			cfg.NoLabel = args[i+1]
+			i += 2
+
 		case "--exit-label":
 			if i+1 >= len(args) {
 				return cfg, errors.New("missing value for --exit-label")
@@ -1855,6 +1968,22 @@ func parseArgs(args []string) (config, error) {
 			cfg.Width, _ = strconv.Atoi(args[i+3])
 			return cfg, nil
 
+		case "--gauge":
+			if i+3 >= len(args) {
+				return cfg, errors.New("invalid --gauge arguments")
+			}
+			cfg.Mode = modeProgress
+			cfg.Text = args[i+1]
+			cfg.Height, _ = strconv.Atoi(args[i+2])
+			cfg.Width, _ = strconv.Atoi(args[i+3])
+			if i+4 < len(args) && !strings.HasPrefix(args[i+4], "--") {
+				cfg.Percent, _ = strconv.Atoi(args[i+4])
+				i += 5
+			} else {
+				i += 4
+			}
+			return cfg, nil
+
 		case "--textbox", "--text-box":
 			if i+3 >= len(args) {
 				return cfg, errors.New("invalid --textbox arguments")
@@ -1915,6 +2044,28 @@ func parseArgs(args []string) (config, error) {
 				return cfg, errors.New("invalid --checklist arguments")
 			}
 			cfg.Mode = modeChecklist
+			cfg.Text = args[i+1]
+			cfg.Height, _ = strconv.Atoi(args[i+2])
+			cfg.Width, _ = strconv.Atoi(args[i+3])
+			cfg.ListHeight, _ = strconv.Atoi(args[i+4])
+
+			for j := i + 5; j+2 < len(args); j += 3 {
+				if strings.HasPrefix(args[j], "--") {
+					break
+				}
+				cfg.Items = append(cfg.Items, menuItem{
+					Tag:   strings.Trim(args[j], `"`),
+					Label: args[j+1],
+					On:    strings.EqualFold(args[j+2], "on"),
+				})
+			}
+			return cfg, nil
+
+		case "--radiolist":
+			if i+4 >= len(args) {
+				return cfg, errors.New("invalid --radiolist arguments")
+			}
+			cfg.Mode = modeRadiolist
 			cfg.Text = args[i+1]
 			cfg.Height, _ = strconv.Atoi(args[i+2])
 			cfg.Width, _ = strconv.Atoi(args[i+3])
@@ -2038,6 +2189,20 @@ func emitResult(m model) int {
 		_, _ = fmt.Fprintln(output, m.cfg.Items[m.cursor].Tag)
 		return 0
 
+	case modeRadiolist:
+		if len(m.cfg.Items) == 0 {
+			return 1
+		}
+		selected := m.cursor
+		for i, it := range m.cfg.Items {
+			if it.On {
+				selected = i
+				break
+			}
+		}
+		_, _ = fmt.Fprintln(output, m.cfg.Items[selected].Tag)
+		return 0
+
 	case modeChecklist:
 		var selected []string
 		for _, it := range m.cfg.Items {
@@ -2101,17 +2266,19 @@ func printHelp() {
 	fmt.Println("Special options:")
 	fmt.Println("  [--help] [--version]")
 	fmt.Println("Common options:")
-	fmt.Println("  [--clear] [--title <title>] [--backtitle <backtitle>] [--ok-label <str>] [--cancel-label <str>] [--exit-label <str>] [--output-fd <fd>] [--default-item <str>] [--no-nl-expand] [--no-collapse] [--insecure] [--theme <name>] [--align <topleft|center>]")
+	fmt.Println("  [--clear] [--title <title>] [--backtitle <backtitle>] [--ok-label <str>] [--cancel-label <str>] [--yes-label <str>] [--no-label <str>] [--exit-label <str>] [--output-fd <fd>] [--default-item <str>] [--no-nl-expand] [--no-collapse] [--insecure] [--theme <name>] [--align <topleft|center>]")
 	fmt.Println("Box options:")
 	fmt.Println("  --msgbox     <text> <height> <width>")
 	fmt.Println("  --infobox    <text> <height> <width>")
 	fmt.Println("  --textbox    <file> <height> <width>")
 	fmt.Println("  --yesno      <text> <height> <width>")
+	fmt.Println("  --gauge      <text> <height> <width> [<percent>]")
 	fmt.Println("  --inputbox   <text> <height> <width>")
 	fmt.Println("  --passwordbox <text> <height> <width>")
 	fmt.Println("  --mixedform  <text> <height> <width> <form-height> <label1> <l_y1> <l_x1> <item1> <i_y1> <i_x1> <flen1> <ilen1> <itype1>...")
 	fmt.Println("  --menu       <text> <height> <width> <menu-height> <tag1> <item1>...")
 	fmt.Println("  --checklist  <text> <height> <width> <list-height> <tag1> <item1> <status1>...")
+	fmt.Println("  --radiolist  <text> <height> <width> <list-height> <tag1> <item1> <status1>...")
 	fmt.Println("  --form       <text> <height> <width> <form-height> <label1> <l_y1> <l_x1> <item1> <i_y1> <i_x1> <flen1> <ilen1>...")
 	fmt.Println("  --progress   <text> <height> <width> [<percent>]")
 }
