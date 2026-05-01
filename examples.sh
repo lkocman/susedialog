@@ -139,7 +139,7 @@ print_section "No-Collapse"
 "$DIALOGCMD" --title "Compatibility" --no-collapse --msgbox "Accepted for compatibility; currently has no layout effect." 10 60
 
 print_section "Gauge"
-"$DIALOGCMD" --title "Gauge" --gauge "Installing packages..." 10 50 67
+"$DIALOGCMD" --title "Gauge" --gauge "Installing packages..." 10 50
 echo "GAUGE_EXIT=$?"
 
 print_section "Progress"
